@@ -139,12 +139,7 @@ function getComplexPA(target, prop, start, end) {
         endNum = res[0];
         chunk = end.substring(index, res.index);
         console.log(chunk);
-
-
-
-        // Что-то написал вот так по бырому для коммита
-
-
+        
 
         // НАПИСАТЬ СВОЁ ТОЧНО ТАКОЕ ЖЕ
         // if (endNum !== startNums[matchIndex++]) {
