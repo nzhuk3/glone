@@ -68,7 +68,6 @@ export class Animation {
             let newPA;
             if (complexExp.test(props[p])) {
                 newPA = getComplexPA(this.target, p, this.initStyles[p], props[p]);
-                console.log(newPA);
             } else if (colorExp.test(props[p])) {
                 newPA = getColorPA(this.target, p, this.initStyles[p], props[p]);
             } else if (numExp.test(props[p])) {
@@ -117,7 +116,7 @@ class PropAnimation {
 
 
 function getComplexPA(target, prop, start, end) {
-    const pA = new PropAnimation(target, prop, start, '', () => {});
+    const pA = new PropAnimation(target, prop, start, end, () => {});
     let _pA = pA;
     if (end.match(colorExp)) {
         end = colorFilter(end);
@@ -131,39 +130,33 @@ function getComplexPA(target, prop, start, end) {
 
     const startNums = start.match(complexStringNumExp);
     const endNums = end.match(complexStringNumExp);
-    console.log('start', start, startNums);
-    console.log('end', end, endNums);
     let startNum;
 
     while (res = complexStringNumExp.exec(end)) {
         endNum = res[0];
         chunk = end.substring(index, res.index);
-        console.log(chunk);
         
-
-        // НАПИСАТЬ СВОЁ ТОЧНО ТАКОЕ ЖЕ
-        // if (endNum !== startNums[matchIndex++]) {
-        //     startNum = startNums[matchIndex - 1] || 0;
-        //     console.log('enter');
-        //     _pA.pt = {
-        //         p: chunk || matchIndex === 1 ? chunk : ",",
-        //         s: startNum,
-        //         c: endNum - startNum,
-        //     };
-        //     _pA = _pA.pt;
-        // }
+        if (endNum !== startNums[matchIndex++]) {
+            startNum = startNums[matchIndex - 1] || 0;
+            _pA.subPA = {
+                part: chunk,
+                start: parseFloat(startNum),
+                end: endNum,
+                diff: endNum - startNum,
+            };
+            _pA = _pA.subPA;
+        }
 
         
         index = complexStringNumExp.lastIndex;
     }
     
-    
-    
+    console.log(pA);
     return pA;
 }
 
 function getColorPA(target, prop, start, end) {
-    return new PropAnimation(target, prop, start, end, () => {});
+    return getComplexPA(target, prop, start, colorFilter(end));
 }
 
 function getPlainPA(target, prop, start, end) {
@@ -176,6 +169,26 @@ function getNonAnimatablePA(target, prop, start, end) {
 
 
 function colorFilter(str) {
+    let res;
+    while (res = colorExp.exec(str)) {
+        const match = res[0];
+        console.log(res);
+
+        if (colorLookup[match]) {
+            console.log('swapped');
+            str = str.replace(match, `rgb(${colorLookup[match]})`);
+        }   
+
+        if (match.includes('hsl')) {
+            str = str.replace(match, hslToRgb(match));
+        }
+
+        if (match.includes('#')) {
+            str = str.replace(match, hexStringToRGB(match));
+        }
+        
+    }
+
     return str
 }
 
@@ -330,8 +343,20 @@ function getTransformValue(cache) { // Нужно переписать на 3d t
 
 function hexStringToRGB(hexString) {
     let arr = hexString.slice(1).match(/.{1,2}/g);
-    const result = {r: Number.parseInt(arr[0],16), g: Number.parseInt(arr[1],16), b: Number.parseInt(arr[2],16)};
-    return result; 
+    if (!arr || (arr.length !== 3 && arr.length !== 4)) {
+        throw new Error("Invalid HEX format");
+    }
+    
+    const result = {
+        r: parseInt(arr[0], 16),
+        g: parseInt(arr[1], 16),
+        b: parseInt(arr[2], 16),
+        a: arr[3] ? (parseInt(arr[3], 16) / 255).toFixed(2) : null
+    };
+    
+    return result.a !== null 
+        ? `rgba(${result.r}, ${result.g}, ${result.b}, ${result.a})` 
+        : `rgb(${result.r}, ${result.g}, ${result.b})`;
 }
 
 function rgbToHexString(r, g, b) {
@@ -351,4 +376,38 @@ function rgbToHexString(r, g, b) {
     });
     
     return result.join('');
+}
+
+function hslToRgb(hslString) {
+    const hslMatch = hslString.match(/hsla?\(\s*(\d+)\s*,\s*(\d+)%\s*,\s*(\d+)%\s*(?:,\s*(\d*\.?\d+)\s*)?\)/);
+    if (!hslMatch) {
+        throw new Error("Invalid HSL/HSLA format");
+    }
+    
+    let [_, h, s, l, a] = hslMatch.map(Number);
+    s /= 100;
+    l /= 100;
+    
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    
+    let r = 0, g = 0, b = 0;
+    
+    if (h < 60) { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+    
+    r = Math.round((r + m) * 255);
+    g = Math.round((g + m) * 255);
+    b = Math.round((b + m) * 255);
+    
+    if (!isNaN(a)) {
+        return `rgba(${r}, ${g}, ${b}, ${a})`;
+    }
+
+    return `rgb(${r}, ${g}, ${b})`;
 }
