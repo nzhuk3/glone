@@ -2,9 +2,10 @@ import Ticker from './Ticker.js';
 
 const capsExp = /([A-Z])/g;
 const horizontalExp = /(left|right|width|margin|padding|x)/i;
-const complexStringNumExp = /[-+=.]*\d+\.?\d*(?:e-|e\+)?\d*/gi
+const complexStringNumExpGlobal = /[-+=.]*\d+\.?\d*(?:e-|e\+)?\d*/gi;
+const complexStringNumExp = /[-+=.]*\d+\.?\d*(?:e-|e\+)?\d*/;
 const complexExp = /[\s,\(]\S/;
-const numExp = /(?:-?\.?\d|\.)+/gi;
+const numExp = /(?:-?\.?\d|\.)+/;
 const valueExp = /(-?\d){1,}/;
 const unitExp = /[a-z]{2,}/;
 const _255 = 255;
@@ -79,22 +80,23 @@ export class Animation {
                 pA = newPA;
                 this.pA = pA;
             } else {
-                pA.next = newPA;
-                pA = pA.next;
+                pA.pA = newPA;
+                pA = pA.pA;
             }
         }
+
     }
+
 
     render = (time, delta, frame) => {
         if (time > this.endTime) {
             Timeline.getInstance().remove(this.render);
-            this.renderProps(1);
+            // Вызов функции рендера всех PROPTWEEN
             return;
         }
 
         const elapsed = Math.abs(this.startTime - time);
         const progress = elapsed / this.duration;
-        this.renderProps(progress);
         // this.applyProps();
     }
 }
@@ -106,17 +108,18 @@ class PropAnimation {
         this.prop = prop;
         this.start = start;
         this.renderer = renderer;
-        this.value = renderer(start, end);
+        this.diff = typeof end == 'number' || typeof start == 'number' ? end - start : end;
+        this.value = start;
     }
 
     render(progress) {
-        renderer(this, progress);
+        this.value = this.renderer(this, progress)    
     }
 }
 
 
 function getComplexPA(target, prop, start, end) {
-    const pA = new PropAnimation(target, prop, start, end, () => {});
+    const pA = new PropAnimation(target, prop, start, end, complexRenderer);
     let _pA = pA;
     if (end.match(colorExp)) {
         end = colorFilter(end);
@@ -128,11 +131,10 @@ function getComplexPA(target, prop, start, end) {
     let endNum;
     let chunk;
 
-    const startNums = start.match(complexStringNumExp);
-    const endNums = end.match(complexStringNumExp);
+    const startNums = start.match(complexStringNumExpGlobal);
     let startNum;
 
-    while (res = complexStringNumExp.exec(end)) {
+    while (res = complexStringNumExpGlobal.exec(end)) {
         endNum = res[0];
         chunk = end.substring(index, res.index);
         
@@ -147,20 +149,19 @@ function getComplexPA(target, prop, start, end) {
             _pA = _pA.subPA;
         }
 
-        
-        index = complexStringNumExp.lastIndex;
+        index = complexStringNumExpGlobal.lastIndex;
     }
+    pA.end = index < end.length ? end.substring(index, end.length) : "";
     
-    console.log(pA);
     return pA;
 }
 
 function getColorPA(target, prop, start, end) {
-    return getComplexPA(target, prop, start, colorFilter(end));
+    return getComplexPA(target, prop, start, end);
 }
 
 function getPlainPA(target, prop, start, end) {
-    return new PropAnimation(target, prop, start, end, () => {});
+    return new PropAnimation(target, prop, start, end, plainRenderer);
 }
 
 function getNonAnimatablePA(target, prop, start, end) {
@@ -168,14 +169,35 @@ function getNonAnimatablePA(target, prop, start, end) {
 }
 
 
+function plainRenderer(pA, progress) {
+    return pA.start + pA.diff * progress;
+}
+
+function nonAnimatableRenderer(pA, progress) {
+    return pA.diff;
+}
+
+function complexRenderer(pA, progress) {
+    let _pA = pA.subPA;
+    console.log(_pA);
+    let result = '';
+
+    while (_pA != null) {
+        result = result.concat(`${_pA.part}${_pA.start + _pA.diff * progress}`)
+        _pA = _pA.subPA;
+    }
+
+    return result.concat(pA.end);
+}
+
+
+
 function colorFilter(str) {
     let res;
     while (res = colorExp.exec(str)) {
         const match = res[0];
-        console.log(res);
 
         if (colorLookup[match]) {
-            console.log('swapped');
             str = str.replace(match, `rgb(${colorLookup[match]})`);
         }   
 
@@ -219,7 +241,7 @@ function collectAppliedStyles(target, props) {
         transforms = Object.entries(transforms)
         .filter(([key, value]) => props.hasOwnProperty(key))
         .reduce((accumulator, [key, prop]) => {
-            accumulator[`${key}`] = prop.toString().match(valueExp)[0];
+            accumulator[`${key}`] = Number.parseFloat(prop.toString().match(valueExp)[0]);
             return accumulator
         },{}) 
     }
@@ -227,7 +249,8 @@ function collectAppliedStyles(target, props) {
     Object.entries(props).forEach( ([key, value]) => {
         if (capsExp.test(key)) key.replace(capsExp, "-$1").toLowerCase();
         if (computedStyles[key] && !isComplexCSSstring(value)) {
-            res[key] = computedStyles[key].replace(/(px)/, '');
+            res[key] = computedStyles[key].replace(/(px)/, '')
+            res[key] = Number.parseFloat(res[key]);
         } else if (computedStyles[key]) {
             res[key] = computedStyles[key];
         }
