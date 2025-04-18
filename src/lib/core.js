@@ -2,12 +2,12 @@ import Ticker from './Ticker.js';
 
 const capsExp = /([A-Z])/g;
 const horizontalExp = /(left|right|width|margin|padding|x)/i;
-const complexStringNumExpGlobal = /[-+=.]*\d+\.?\d*(?:e-|e\+)?\d*/gi;
-const complexStringNumExp = /[-+=.]*\d+\.?\d*(?:e-|e\+)?\d*/;
-const complexExp = /[\s,\(]\S/;
+const numWithUnitExp = /[-+=.]*\d+[.e-]*\d*[a-z%]*/g;
+const complexExp = /[\s,\(]\S/g;
 const numExp = /(?:-?\.?\d|\.)+/;
-const valueExp = /(-?\d){1,}/;
+const valueExp = /-?\d{1,}/;
 const unitExp = /[a-z]{2,}/;
+const numAndUnitExp = /(-?\d{1,})([A-z]{2,})?/;
 const _255 = 255;
 const colorLookup = {
     aqua: [0, _255, _255],
@@ -31,6 +31,30 @@ const colorLookup = {
     transparent: [_255, _255, _255, 0]
 }
 
+const unitsLookup = {
+    bottom: "px",
+    fontSize: "px",
+    height: "px",
+    left: "px",
+    lineHeight: "",
+    margin: "px",
+    padding: "px",
+    perspective: "px",
+    right: "px",
+    rotate: "deg",
+    rotateX: "deg",
+    rotateY: "deg",
+    skewX: "deg",
+    skewY: "deg",
+    top: "px",
+    width: "px",
+    translateX: "px",
+    translateY: "px",
+    translateZ: "px"
+}
+
+
+
 const colorExp = function () {
     var s = "(?:\\b(?:(?:rgb|rgba|hsl|hsla)\\(.+?\\))|\\B#(?:[0-9a-f]{3,4}){1,2}\\b",
         //we'll dynamically build this Regular Expression to conserve file size. After building it, it will be able to find rgb(), rgba(), # (hexadecimal), and named color values like red, blue, purple, etc.,
@@ -43,17 +67,16 @@ const colorExp = function () {
     return new RegExp(s + ")", "gi");
 }()
 
-
-
 export class Animation { 
     timeScale = 1;
     pA = null;
 
     constructor(target, props) {
-        this.animatableProps = parseInitialProps(target, props);
+        this.computedStyles = window.getComputedStyle(target);
+        this.animatableProps = parseAnimationProps(props, this.computedStyles);
+        this.initialStyles = getInitialStyles(this.animatableProps, this.computedStyles);
         this.ease = props.ease;
         this.target = target;
-        this.initStyles = collectAppliedStyles(target, this.animatableProps);
         this.duration = this.duration * 1000 || 0.5 * 1000;
         this.startTime = Ticker.getInstance().time;
         this.endTime = this.startTime + this.duration;
@@ -63,19 +86,36 @@ export class Animation {
         //Ticker.getInstance().add(this.render, true);
     }
 
-    initAnimation(props) {
+    getStyle(prop) {
+        return this.initialStyles[prop] != undefined ? this.initialStyles[prop] : this.computedStyles[prop];
+    }
+
+    initAnimation(props) {  // Переписать так чтобы в начале применялся фильтр по цвету, с помощью регулярного выражения единицы измерения отделялись от чисел и получение изначального значения и все операции по приведению к нормальным значениям происходили внутри этого цикла
         let pA;
         for (const p in props) {
             let newPA;
-            if (complexExp.test(props[p])) {
-                newPA = getComplexPA(this.target, p, this.initStyles[p], props[p]);
-            } else if (colorExp.test(props[p])) {
-                newPA = getColorPA(this.target, p, this.initStyles[p], props[p]);
-            } else if (numExp.test(props[p])) {
-                newPA = getPlainPA(this.target, p, this.initStyles[p], props[p]);
+            let endValue = props[p];
+            let startValue = this.getStyle(p);
+
+            if (complexExp.test(endValue) && numExp.test(endValue)) {
+                newPA = getComplexPA(this.target, p, startValue, endValue);
+                //console.log('complex', newPA);
+            } else if (colorExp.test(endValue)) {
+                newPA = getColorPA(this.target, p, startValue, endValue);
+                //console.log('color', newPA);
+            } else if (numExp.test(endValue)) {
+                const startUnit = getUnit(startValue) || unitsLookup[p] || '';
+                const endUnit = getUnit(endValue) || unitsLookup[p] || '';
+                
+                newPA = getPlainPA(this.target, p, parseFloat(startValue.toString().match(numAndUnitExp)[1]), parseFloat(endValue.toString().match(numAndUnitExp)[1]));
+                newPA.unit = startUnit || endUnit
+                
+                //console.log('plain', newPA);
             } else {
-                newPA = getNonAnimatablePA(this.target, p, this.initStyles[p], props[p]);
+                newPA = getNonAnimatablePA(this.target, p, startValue, endValue);
+                //console.log('non animatable', newPA);
             }
+
             if (this.pA == null) {
                 pA = newPA;
                 this.pA = pA;
@@ -85,19 +125,34 @@ export class Animation {
             }
         }
 
+        console.log(this.renderProps(0.32));
+        // console.log(getCSSStylesFromProps(this.renderProps(0.32)));
     }
 
 
     render = (time, delta, frame) => {
         if (time > this.endTime) {
             Timeline.getInstance().remove(this.render);
-            // Вызов функции рендера всех PROPTWEEN
+            //this.renderProps(1);
             return;
         }
 
         const elapsed = Math.abs(this.startTime - time);
         const progress = elapsed / this.duration;
+        //this.renderProps(progress);
         // this.applyProps();
+    }
+
+    renderProps = (progress) => {
+        let _pA = this.pA;
+        const result = {};
+        while (_pA) {
+            _pA.render(progress);
+            result[_pA.prop] = _pA.value
+            _pA = _pA.pA;
+        }
+
+        return result;
     }
 }
 
@@ -124,36 +179,65 @@ function getComplexPA(target, prop, start, end) {
     if (end.match(colorExp)) {
         end = colorFilter(end);
     }
-
+    let startValue;
+    let startUnit, endUnit;
+    let endValue;
     let res;
     let index = 0;
     let matchIndex = 0;
     let endNum;
     let chunk;
 
-    const startNums = start.match(complexStringNumExpGlobal);
+    // if (!start || start == 'none') {
+    //     console.warn(`Property ${prop} will not be animated because starting value is 'none'`);
+    //     return new PropAnimation(target, prop, start, end, nonAnimatableRenderer);
+    // }
+
+    const startValues = start.match(numWithUnitExp) || [];
+    const endValues = end.match(numWithUnitExp) || [];
     let startNum;
 
-    while (res = complexStringNumExpGlobal.exec(end)) {
-        endNum = res[0];
-        chunk = end.substring(index, res.index);
-        
-        if (endNum !== startNums[matchIndex++]) {
-            startNum = startNums[matchIndex - 1] || 0;
-            _pA.subPA = {
-                part: chunk,
-                start: parseFloat(startNum),
-                end: endNum,
-                diff: endNum - startNum,
-            };
-            _pA = _pA.subPA;
-        }
+    if (endValues.length) {
+        while (res = numWithUnitExp.exec(end)) {
+            endValue = res[0];
+            chunk = end.substring(index, res.index);
+            
+            if (endValue !== (startValue = startValues[matchIndex++] || "")) {
+                startNum = parseFloat(startValue) || 0;
+                startUnit = startValue.substring((startNum + "").length);
+                endNum = parseFloat(endValue);
+                endUnit = endValue.substring((endNum + "").length);
+                index = numWithUnitExp.lastIndex - endUnit.length;
 
-        index = complexStringNumExpGlobal.lastIndex;
-    }
-    pA.end = index < end.length ? end.substring(index, end.length) : "";
+
+                if (!endUnit) {
+                    //if something like "perspective:300" is passed in and we must add a unit to the end
+                    endUnit = unitsLookup[prop] || startUnit;
+        
+                    if (index === end.length) {
+                      pA.end += endUnit;
+                      pt.e += endUnit;
+                    }
+                }
+
+                _pA.subPA = {
+                    part: chunk,
+                    start: parseFloat(startNum),
+                    end: endNum,
+                    diff: endNum - startNum,
+                };
+                _pA = _pA.subPA;
+            }
     
-    return pA;
+            
+        }
+        pA.end = index < end.length ? end.substring(index, end.length) : "";
+        
+        return pA;
+    } else {
+        return new PropAnimation(target, prop, start, end, nonAnimatableRenderer);
+    }
+
 }
 
 function getColorPA(target, prop, start, end) {
@@ -165,12 +249,12 @@ function getPlainPA(target, prop, start, end) {
 }
 
 function getNonAnimatablePA(target, prop, start, end) {
-    return new PropAnimation(target, prop, start, end, () => {});
+    return new PropAnimation(target, prop, start, end, nonAnimatableRenderer);
 }
 
 
 function plainRenderer(pA, progress) {
-    return pA.start + pA.diff * progress;
+    return pA.start + pA.diff * progress + pA.unit;
 }
 
 function nonAnimatableRenderer(pA, progress) {
@@ -179,7 +263,6 @@ function nonAnimatableRenderer(pA, progress) {
 
 function complexRenderer(pA, progress) {
     let _pA = pA.subPA;
-    console.log(_pA);
     let result = '';
 
     while (_pA != null) {
@@ -194,6 +277,11 @@ function complexRenderer(pA, progress) {
 
 function colorFilter(str) {
     let res;
+
+    if (str.includes('light') || str.includes('dark')) {
+        return str;
+    }
+
     while (res = colorExp.exec(str)) {
         const match = res[0];
 
@@ -214,11 +302,12 @@ function colorFilter(str) {
     return str
 }
 
-function parseInitialProps(target, props) {
+function parseAnimationProps(props, styles) {
     const res = {};
-    const styles = window.getComputedStyle(target);
+    const transforms = getInitialTransformValues(styles);
+
     for (const p in props) {
-        if (styles[p]) {
+        if (styles[p] || transforms[p] != undefined) {
             if (p == 'x' || p == 'y') {
                 res['translate' + p.toUpperCase()] = props[p];
             } else {
@@ -230,14 +319,12 @@ function parseInitialProps(target, props) {
     return res;
 }
 
-function collectAppliedStyles(target, props) {
-    const computedStyles = window.getComputedStyle(target);
-  
+function getInitialStyles(props, computedStyles) {
     const res = {};
     let transforms = {};
 
     if (props.translateX || props.translateY || props.rotate || props.scale || props.scaleX || props.scaleY || props.skewX || props.skewY) {
-        transforms = getInitialTransformValues(target);
+        transforms = getInitialTransformValues(computedStyles);
         transforms = Object.entries(transforms)
         .filter(([key, value]) => props.hasOwnProperty(key))
         .reduce((accumulator, [key, prop]) => {
@@ -246,43 +333,42 @@ function collectAppliedStyles(target, props) {
         },{}) 
     }
 
-    Object.entries(props).forEach( ([key, value]) => {
-        if (capsExp.test(key)) key.replace(capsExp, "-$1").toLowerCase();
-        if (computedStyles[key] && !isComplexCSSstring(value)) {
-            res[key] = computedStyles[key].replace(/(px)/, '')
-            res[key] = Number.parseFloat(res[key]);
-        } else if (computedStyles[key]) {
-            res[key] = computedStyles[key];
+
+    for (let p in props) {
+        if (computedStyles[p] != undefined) {
+            res[p] = computedStyles[p];  
         }
-    })
+    }
   
-  return ({...props, ...res, ...transforms});
+    return ({...props, ...res, ...transforms});
 }
 
 function isComplexCSSstring(string) {
     return complexExp.test(string)
 }
 
-function parseProp(prop) { // поддержка других единиц измерения и конвертация в пиксели
-    if (prop.value.toString().match(complexExp)) {
-        prop.isComplex = true;
-        if (prop.value.includes(' ')) {
-            prop.parts = prop.value.split(' ');
-        }
-        prop.parts = prop.value.split(' ');
-    } else if (prop.value.toString().match(unitExp)) {
-        prop.quantity = prop.value.match(valueExp)[0];
-        prop.unit = prop.value.match(unitExp)[0];
-    } else if (prop.value.toString().match(valueExp)) {
-        prop.quantity = prop.value;
-    } else {
-        console.error('Wrong prop format or value', prop);
+function parseInitialPropValue(p, computedStyles) {
+    const initial = computedStyles[p] != undefined ? computedStyles[p] : false;
+    let res;
+
+    if (initial && !isComplexCSSstring(initial) && numExp.test(initial)) {
+        res = parseStringWithPx(initial);
+    } else if (initial) {
+        res = initial;
     }
 
-    if (!prop.unit) prop.unit = '';
+    if (isNaN(res)) {
+        
+    }
 
-    return prop;
+    return res;
 }
+
+
+function parseStringWithPx(str) {
+    return Number.parseFloat(str.replace(/(px)/, ''));
+}
+
 
 function getTransformMatrix(scaleX, scaleY, rotationDegrees, translateX, translateY) {
     const radians = rotationDegrees * Math.PI / 180;
@@ -299,8 +385,7 @@ function getTransformMatrix(scaleX, scaleY, rotationDegrees, translateX, transla
     return `matrix(${matrixValues.join(', ')})`;
 }
 
-function getInitialTransformValues(element) {
-    const computedStyles = window.getComputedStyle(element);
+function getInitialTransformValues(computedStyles) {
     const transform = computedStyles.transform;
   
     let transformValues = {
@@ -327,6 +412,12 @@ function getInitialTransformValues(element) {
         };
     }
 
+    if (transformValues.scaleX === transformValues.scaleY) {
+        transformValues.scale = transformValues.scaleX;
+    } else {
+        transformValues.scale = `${transformValues.scaleX} ${transformValues.scaleY}`
+    }
+
     return transformValues;
 }
 
@@ -341,7 +432,7 @@ function getInlineStylesFromCache(cache) {
 function getTransformValue(cache) { // Нужно переписать на 3d transform или на matrix
     let transformString = '';
     if (cache.translateX || cache.translateY) {
-        transformString += `translate(${cache.translateX || '0px'}, ${cache.translateY || '0px'}) `;
+        transformString += `translate(${cache.translateX || '0'}px, ${cache.translateY || '0'}px) `;
     }
     if (cache.scaleX) {
         transformString += `scaleX(${cache.scaleX}) `;
@@ -353,7 +444,7 @@ function getTransformValue(cache) { // Нужно переписать на 3d t
         transformString += `scale(${cache.scale}) `;
     }
     if (cache.rotate) {
-        transformString += `rotate(${cache.rotate}) `;
+        transformString += `rotate(${cache.rotate}deg) `;
     }
     if (cache.skewX) {
         transformString += `skewX(${cache.skewX}) `;
@@ -433,4 +524,27 @@ function hslToRgb(hslString) {
     }
 
     return `rgb(${r}, ${g}, ${b})`;
+}
+
+function compressTransformProps(props) {
+    const transformProps = ['translateX', 'translateY','translateZ','scale','scaleX','scaleY','rotate', 'skewX', 'skewY'];
+
+    const transformString = getTransformValue(props);
+    props.transform = transformString;
+    
+    transformProps.forEach(prop => {
+        delete props[prop];
+    });
+    
+    return props;
+}
+
+function getUnit(value) {
+    let unit = '';
+    if (typeof value === 'string' && numExp.test(value)) {
+        console.log('getUnit call', value);
+        unit = value.match(numAndUnitExp)[2];
+    }
+
+    return unit;
 }
