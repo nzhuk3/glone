@@ -7,7 +7,7 @@ const complexExp = /[\s,\(]\S/g;
 const numExp = /(?:-?\.?\d|\.)+/;
 const valueExp = /-?\d{1,}/;
 const unitExp = /[a-z]{2,}/;
-const numAndUnitExp = /(-?\d{1,})([A-z]{2,})?/;
+const numAndUnitExp = /(-?\d{1,}\.?\d*)([A-z]{1,})?/;
 const _255 = 255;
 const colorLookup = {
     aqua: [0, _255, _255],
@@ -53,8 +53,6 @@ const unitsLookup = {
     translateZ: "px"
 }
 
-
-
 const colorExp = function () {
     var s = "(?:\\b(?:(?:rgb|rgba|hsl|hsla)\\(.+?\\))|\\B#(?:[0-9a-f]{3,4}){1,2}\\b",
         //we'll dynamically build this Regular Expression to conserve file size. After building it, it will be able to find rgb(), rgba(), # (hexadecimal), and named color values like red, blue, purple, etc.,
@@ -73,24 +71,26 @@ export class Animation {
 
     constructor(target, props) {
         this.computedStyles = window.getComputedStyle(target);
-        this.animatableProps = parseAnimationProps(props, this.computedStyles);
-        this.initialStyles = getInitialStyles(this.animatableProps, this.computedStyles);
+        this.animatableProps = parseAnimationProps(target, props, this.computedStyles);
+        this.initialStyles = getInitialStyles(target, this.animatableProps, this.computedStyles);
+        this.initialTransformValues = getInitialTransformValues(target, this.computedStyles);
         this.ease = props.ease;
         this.target = target;
-        this.duration = this.duration * 1000 || 0.5 * 1000;
+        this.duration = props.duration * 1000 || 500;
         this.startTime = Ticker.getInstance().time;
         this.endTime = this.startTime + this.duration;
         console.log(this);
-
+        console.log(this.computedStyles.transformOrigin);
+        
         this.initAnimation(this.animatableProps);
-        //Ticker.getInstance().add(this.render, true);
+        Ticker.getInstance().add(this.render, true);
     }
 
     getStyle(prop) {
         return this.initialStyles[prop] != undefined ? this.initialStyles[prop] : this.computedStyles[prop];
     }
 
-    initAnimation(props) {  // Переписать так чтобы в начале применялся фильтр по цвету, с помощью регулярного выражения единицы измерения отделялись от чисел и получение изначального значения и все операции по приведению к нормальным значениям происходили внутри этого цикла
+    initAnimation(props) {  
         let pA;
         for (const p in props) {
             let newPA;
@@ -106,11 +106,13 @@ export class Animation {
             } else if (numExp.test(endValue)) {
                 const startUnit = getUnit(startValue) || unitsLookup[p] || '';
                 const endUnit = getUnit(endValue) || unitsLookup[p] || '';
-                
-                newPA = getPlainPA(this.target, p, parseFloat(startValue.toString().match(numAndUnitExp)[1]), parseFloat(endValue.toString().match(numAndUnitExp)[1]));
+
+                const startNum = parseFloat(startValue.toString().match(numExp)) || 0;
+                const endNum = parseFloat(endValue.toString().match(numExp)) || 0;
+                newPA = getPlainPA(this.target, p, startNum, endNum);
                 newPA.unit = startUnit || endUnit
                 
-                //console.log('plain', newPA);
+                // console.log('plain', newPA);
             } else {
                 newPA = getNonAnimatablePA(this.target, p, startValue, endValue);
                 //console.log('non animatable', newPA);
@@ -124,23 +126,18 @@ export class Animation {
                 pA = pA.pA;
             }
         }
-
-        console.log(this.renderProps(0.32));
-        // console.log(getCSSStylesFromProps(this.renderProps(0.32)));
     }
-
 
     render = (time, delta, frame) => {
         if (time > this.endTime) {
-            Timeline.getInstance().remove(this.render);
-            //this.renderProps(1);
+            Ticker.getInstance().remove(this.render);
+            this.applyProps(1);
             return;
         }
 
         const elapsed = Math.abs(this.startTime - time);
         const progress = elapsed / this.duration;
-        //this.renderProps(progress);
-        // this.applyProps();
+        this.applyProps(progress);
     }
 
     renderProps = (progress) => {
@@ -152,7 +149,15 @@ export class Animation {
             _pA = _pA.pA;
         }
 
-        return result;
+        return compressTransformProps(this, result);
+    }
+
+    applyProps(progress) {
+        const renderedProps = this.renderProps(progress);
+        for (const p in renderedProps) {
+            const value = renderedProps[p];
+            this.target.style[p] = value;
+        }
     }
 }
 
@@ -211,7 +216,6 @@ function getComplexPA(target, prop, start, end) {
 
 
                 if (!endUnit) {
-                    //if something like "perspective:300" is passed in and we must add a unit to the end
                     endUnit = unitsLookup[prop] || startUnit;
         
                     if (index === end.length) {
@@ -254,7 +258,7 @@ function getNonAnimatablePA(target, prop, start, end) {
 
 
 function plainRenderer(pA, progress) {
-    return pA.start + pA.diff * progress + pA.unit;
+    return Math.round((pA.start + pA.diff * progress) * 10000) / 10000  + pA.unit;
 }
 
 function nonAnimatableRenderer(pA, progress) {
@@ -266,7 +270,7 @@ function complexRenderer(pA, progress) {
     let result = '';
 
     while (_pA != null) {
-        result = result.concat(`${_pA.part}${_pA.start + _pA.diff * progress}`)
+        result = result.concat(`${_pA.part}${Math.round((_pA.start + _pA.diff * progress) * 10000) / 10000}`)
         _pA = _pA.subPA;
     }
 
@@ -302,9 +306,9 @@ function colorFilter(str) {
     return str
 }
 
-function parseAnimationProps(props, styles) {
+function parseAnimationProps(el, props, styles) {
     const res = {};
-    const transforms = getInitialTransformValues(styles);
+    const transforms = getInitialTransformValues(el, styles);
 
     for (const p in props) {
         if (styles[p] || transforms[p] != undefined) {
@@ -319,12 +323,12 @@ function parseAnimationProps(props, styles) {
     return res;
 }
 
-function getInitialStyles(props, computedStyles) {
+function getInitialStyles(el, props, computedStyles) {
     const res = {};
     let transforms = {};
 
     if (props.translateX || props.translateY || props.rotate || props.scale || props.scaleX || props.scaleY || props.skewX || props.skewY) {
-        transforms = getInitialTransformValues(computedStyles);
+        transforms = getInitialTransformValues(el, computedStyles);
         transforms = Object.entries(transforms)
         .filter(([key, value]) => props.hasOwnProperty(key))
         .reduce((accumulator, [key, prop]) => {
@@ -342,28 +346,6 @@ function getInitialStyles(props, computedStyles) {
   
     return ({...props, ...res, ...transforms});
 }
-
-function isComplexCSSstring(string) {
-    return complexExp.test(string)
-}
-
-function parseInitialPropValue(p, computedStyles) {
-    const initial = computedStyles[p] != undefined ? computedStyles[p] : false;
-    let res;
-
-    if (initial && !isComplexCSSstring(initial) && numExp.test(initial)) {
-        res = parseStringWithPx(initial);
-    } else if (initial) {
-        res = initial;
-    }
-
-    if (isNaN(res)) {
-        
-    }
-
-    return res;
-}
-
 
 function parseStringWithPx(str) {
     return Number.parseFloat(str.replace(/(px)/, ''));
@@ -385,10 +367,12 @@ function getTransformMatrix(scaleX, scaleY, rotationDegrees, translateX, transla
     return `matrix(${matrixValues.join(', ')})`;
 }
 
-function getInitialTransformValues(computedStyles) {
+function getInitialTransformValues(el, computedStyles) {
     const transform = computedStyles.transform;
   
     let transformValues = {
+        xPercent: 0,
+        yPercent: 0,
         translateX: 0,
         translateY: 0,
         scaleX: 1,
@@ -400,10 +384,13 @@ function getInitialTransformValues(computedStyles) {
 
     if (transform !== 'none') {
         const matrix = new WebKitCSSMatrix(transform);
-
+        const xPercent = Math.round(el.offsetWidth/2) === Math.round(-matrix.m41) ? -50 : 0;
+        const yPercent = Math.round(el.offsetHeight/2) === Math.round(-matrix.m42) ? -50 : 0;
         transformValues = {
-            translateX: matrix.m41,                                     // Смещение по оси X
-            translateY: matrix.m42,                                     // Смещение по оси Y
+            xPercent: xPercent,
+            yPercent: yPercent,
+            translateX: matrix.m41 - (xPercent * el.offsetWidth / 100),                                     // Смещение по оси X
+            translateY: matrix.m42 - (yPercent * el.offsetHeight / 100),                                     // Смещение по оси Y
             scaleX: matrix.a,                                           // Масштаб по оси X
             scaleY: matrix.d,                                           // Масштаб по оси Y
             rotate: Math.atan2(matrix.b, matrix.a) * (180 / Math.PI),   // Вращение в градусах
@@ -421,18 +408,11 @@ function getInitialTransformValues(computedStyles) {
     return transformValues;
 }
 
-function getInlineStylesFromCache(cache) {
-    let result = {};
-    if (cache.translateX || cache.translateY || cache.rotate || cache.scale || cache.scaleX || cache.scaleY || cache.skewX || cache.skewY) {
-        result.transform = getTransformValue(cache);
-    }
-}
-
 
 function getTransformValue(cache) { // Нужно переписать на 3d transform или на matrix
     let transformString = '';
     if (cache.translateX || cache.translateY) {
-        transformString += `translate(${cache.translateX || '0'}px, ${cache.translateY || '0'}px) `;
+        transformString += `translate(${cache.translateX || '0'}, ${cache.translateY || '0'}) `;
     }
     if (cache.scaleX) {
         transformString += `scaleX(${cache.scaleX}) `;
@@ -444,7 +424,7 @@ function getTransformValue(cache) { // Нужно переписать на 3d t
         transformString += `scale(${cache.scale}) `;
     }
     if (cache.rotate) {
-        transformString += `rotate(${cache.rotate}deg) `;
+        transformString += `rotate(${cache.rotate}) `;
     }
     if (cache.skewX) {
         transformString += `skewX(${cache.skewX}) `;
@@ -526,15 +506,23 @@ function hslToRgb(hslString) {
     return `rgb(${r}, ${g}, ${b})`;
 }
 
-function compressTransformProps(props) {
+function compressTransformProps(animation, props) {
     const transformProps = ['translateX', 'translateY','translateZ','scale','scaleX','scaleY','rotate', 'skewX', 'skewY'];
+    let transformString = getTransformValue(props);
+    const xP = animation.initialTransformValues.xPercent;
+    const yP = animation.initialTransformValues.yPercent
+    if (xP != 0 || yP != 0) {
+        transformString = `translate(${xP}%, ${yP}%) ${transformString}`;
+    }
 
-    const transformString = getTransformValue(props);
-    props.transform = transformString;
-    
     transformProps.forEach(prop => {
         delete props[prop];
     });
+
+    props.translate = "none";
+    props.rotate = "none";
+    props.scale = "none";
+    props.transform = transformString;
     
     return props;
 }
@@ -542,7 +530,6 @@ function compressTransformProps(props) {
 function getUnit(value) {
     let unit = '';
     if (typeof value === 'string' && numExp.test(value)) {
-        console.log('getUnit call', value);
         unit = value.match(numAndUnitExp)[2];
     }
 
