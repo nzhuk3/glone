@@ -31,8 +31,18 @@ const colorLookup = {
     transparent: [_255, _255, _255, 0]
 }
 
+const shorthandProps = {
+    margin:    ["Top","Right","Bottom","Left"].map(side => `margin${side}`),
+    padding:   ["Top","Right","Bottom","Left"].map(side => `padding${side}`),
+    // для borderWidth и borderRadius – если нужно, аналогично, но с другими окончаниями:
+    borderWidth:  ["Top","Right","Bottom","Left"].map(side => `border${side}Width`),
+    borderRadius: ["TopLeft","TopRight","BottomRight","BottomLeft"].map(corner => `border${corner}Radius`)
+};
+
 const unitsLookup = {
     bottom: "px",
+    borderWidth: "px",
+    borderRadius: "px",
     fontSize: "px",
     height: "px",
     left: "px",
@@ -53,6 +63,12 @@ const unitsLookup = {
     translateZ: "px"
 }
 
+for (const key in shorthandProps) {
+    shorthandProps[key].forEach(direction => {
+        unitsLookup[direction] = unitsLookup[key];
+    })
+}
+
 const colorExp = function () {
     var s = "(?:\\b(?:(?:rgb|rgba|hsl|hsla)\\(.+?\\))|\\B#(?:[0-9a-f]{3,4}){1,2}\\b",
         //we'll dynamically build this Regular Expression to conserve file size. After building it, it will be able to find rgb(), rgba(), # (hexadecimal), and named color values like red, blue, purple, etc.,
@@ -65,9 +81,13 @@ const colorExp = function () {
     return new RegExp(s + ")", "gi");
 }()
 
-export class Animation { 
+export class Animation { // Должно быть несколько типов анимаций, в зависимости от которых элементу задаются начальные значения для анимации (тип 1 - с указанных значений на указанные, тип 2 - с места на указанные, тип 3 - с указанных на место)
     timeScale = 1;
+    isPaused = false;
+    isReversed = false;
     pA = null;
+    elapsed = 0;
+    progress = 0;
 
     constructor(target, props) {
         this.computedStyles = window.getComputedStyle(target);
@@ -80,10 +100,32 @@ export class Animation {
         this.startTime = Ticker.getInstance().time;
         this.endTime = this.startTime + this.duration;
         console.log(this);
-        console.log(this.computedStyles.transformOrigin);
+        //console.log("Start time",this.startTime);
+       // console.log("End time",this.endTime);
         
         this.initAnimation(this.animatableProps);
         Ticker.getInstance().add(this.render, true);
+    }
+
+    seek(time) {
+        if (time * 1000 > this.duration) {
+            this.progress = 1;
+        } else {
+            this.startTime = this.startTime - time * 1000;
+            this.endTime = this.startTime + this.duration;
+            this.progress = time * 1000 / this.duration;
+        }
+    }
+
+    stop() {
+        this.remaining = this.duration - this.elapsed;
+        this.isPaused = true;
+    }
+
+    continue() {
+        this.endTime = Ticker.getInstance().time + this.remaining;
+        this.startTime = Ticker.getInstance().time - (this.duration - this.remaining);
+        this.isPaused = false;
     }
 
     getStyle(prop) {
@@ -96,6 +138,7 @@ export class Animation {
             let newPA;
             let endValue = props[p];
             let startValue = this.getStyle(p);
+
 
             if (complexExp.test(endValue) && numExp.test(endValue)) {
                 newPA = getComplexPA(this.target, p, startValue, endValue);
@@ -129,15 +172,22 @@ export class Animation {
     }
 
     render = (time, delta, frame) => {
-        if (time > this.endTime) {
+        if (time > this.endTime && !this.isPaused) {
             Ticker.getInstance().remove(this.render);
             this.applyProps(1);
             return;
         }
 
-        const elapsed = Math.abs(this.startTime - time);
-        const progress = elapsed / this.duration;
-        this.applyProps(progress);
+        if (this.isPaused) {
+            this.applyProps(this.progress);
+            return;
+        }
+
+        this.elapsed = time - this.startTime;
+        this.progress = this.elapsed / this.duration;
+        // console.log(this.progress);
+
+        this.applyProps(this.progress);
     }
 
     renderProps = (progress) => {
@@ -154,6 +204,7 @@ export class Animation {
 
     applyProps(progress) {
         const renderedProps = this.renderProps(progress);
+        console.log(renderedProps);
         for (const p in renderedProps) {
             const value = renderedProps[p];
             this.target.style[p] = value;
@@ -309,16 +360,49 @@ function colorFilter(str) {
 function parseAnimationProps(el, props, styles) {
     const res = {};
     const transforms = getInitialTransformValues(el, styles);
+    
 
     for (const p in props) {
-        if (styles[p] || transforms[p] != undefined) {
+        if (styles[p] || transforms[p] != undefined ) {
             if (p == 'x' || p == 'y') {
                 res['translate' + p.toUpperCase()] = props[p];
+            } else if (shorthandProps[p] != undefined) {
+                const allProps = parseShorthandProperty(p, props[p], styles);
+                console.log(allProps);
+                for (const key in allProps) {
+                    res[key] = allProps[key];
+                }
             } else {
                 res[p] = props[p];
             }
         }
     }
+
+    return res;
+}
+
+function parseShorthandProperty(prop, value, cS) {
+    const res = {};
+    const directions = shorthandProps[prop];
+    // разбиваем на части и дополняем до 4
+    const parts = value.toString().split(/\s+/);
+    let values;
+    
+    switch(parts.length) {
+        case 1: values = [parts[0], parts[0], parts[0], parts[0]];
+            break;
+        case 2: values = [parts[0], parts[1], parts[0], parts[1]];
+            break;
+        case 3: parts.push(0);
+                values = parts;
+            break;
+        case 4: values = parts;
+        break;
+    }
+
+    directions.forEach((direction, i) => {
+        res[direction] = values[i];
+    })
 
     return res;
 }

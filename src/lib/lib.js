@@ -1,7 +1,7 @@
 import Timeline from "./Ticker.js";
-import { Animation } from "./core.js";
+import { Container } from "./container.js";
 
 
-export function animateTo(element, vars) {
-    const an = new Animation(element, vars); 
+export function animateTo(query, vars) {
+    return new Container(query, vars)
 }

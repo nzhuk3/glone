@@ -27,13 +27,16 @@ const cssProperties = {
 document.querySelector('#id1').addEventListener('click', (event) => {
     event.preventDefault();
     console.log('clicked');
-    const a = gsap.to(".target-blue",{ ...{
-        ease: "none",
-        duration: 2.5,
-        y: -250,
-        x: 200,
-        // rotate: 120,
-    }, ...cssProperties});
+    // const a = gsap.to(".target",{ ...{
+    //     ease: "none",
+    //     duration: 2.5,
+    //     margin: 10,
+    //     border: "12px dotted rgb(255, 255, 0)",
+    //     scale: 1.5,
+    //     y: -250,
+    //     x: 200,
+    //     rotate: 120,
+    // }, ...cssProperties});
 
     
     // setTimeout(() => {
@@ -43,17 +46,20 @@ document.querySelector('#id1').addEventListener('click', (event) => {
    
 
 
-    animateTo(document.querySelector('.target-yellow'),{ ...{
+    const b = animateTo('.target',{ ...{
         ease: quad,
         duration: 2.5,
         y: -250,
         x: 200,
-        // rotate: 120,
-        // border: "12px dotted rgb(255, 255, 0)",
-        // margin: 10,
-        // scale: 1.5,
-        // skewX: 20
+        rotate: 120,
+        border: "12px dotted rgb(255, 255, 0)",
+        margin: '10',
+        scale: 1.5,
     }, ...cssProperties})
+
+    // setTimeout(() => a.stop(), 500);
+
+    // setTimeout(() => a.continue(), 3000);
 })
 
 
