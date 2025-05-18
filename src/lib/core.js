@@ -1,4 +1,5 @@
 import Ticker from './Ticker.js';
+import { easeQuadInOut } from './ease.js';
 
 const capsExp = /([A-Z])/g;
 const horizontalExp = /(left|right|width|margin|padding|x)/i;
@@ -34,7 +35,6 @@ const colorLookup = {
 const shorthandProps = {
     margin:    ["Top","Right","Bottom","Left"].map(side => `margin${side}`),
     padding:   ["Top","Right","Bottom","Left"].map(side => `padding${side}`),
-    // для borderWidth и borderRadius – если нужно, аналогично, но с другими окончаниями:
     borderWidth:  ["Top","Right","Bottom","Left"].map(side => `border${side}Width`),
     borderRadius: ["TopLeft","TopRight","BottomRight","BottomLeft"].map(corner => `border${corner}Radius`)
 };
@@ -85,27 +85,24 @@ export class Animation { // Должно быть несколько типов 
     timeScale = 1;
     isPaused = false;
     isReversed = false;
+    isInitted = false;
     pA = null;
     elapsed = 0;
     progress = 0;
 
-    constructor(target, props) {
-        this.computedStyles = window.getComputedStyle(target);
-        this.animatableProps = parseAnimationProps(target, props, this.computedStyles);
-        this.initialStyles = getInitialStyles(target, this.animatableProps, this.computedStyles);
-        this.initialTransformValues = getInitialTransformValues(target, this.computedStyles);
-        this.ease = props.ease;
+    constructor(target, props, animationType) {
+        this.target = target;
+        this.props = props;
+        this.animationType = animationType;
+
+        this.ease = props.ease ?? easeQuadInOut;
         this.target = target;
         this.duration = props.duration * 1000 || 500;
-        this.startTime = Ticker.getInstance().time;
+        this.delay = props.delay || 0;
+        this.startTime = (props.startTime || Ticker.getInstance().time) + this.delay * 1000;
         this.endTime = this.startTime + this.duration;
-        console.log(this);
-        //console.log("Start time",this.startTime);
-       // console.log("End time",this.endTime);
-        
-        this.initAnimation(this.animatableProps);
-        Ticker.getInstance().add(this.render, true);
     }
+
 
     seek(time) {
         if (time * 1000 > this.duration) {
@@ -129,14 +126,37 @@ export class Animation { // Должно быть несколько типов 
     }
 
     getStyle(prop) {
-        return this.initialStyles[prop] != undefined ? this.initialStyles[prop] : this.computedStyles[prop];
+        return this.startProps[prop] != undefined ? this.startProps[prop] : console.error(`start value for prop ${prop} not found`);;
     }
 
-    initAnimation(props) {  
+    initAnimation() {  
+        this.computedStyles = window.getComputedStyle(this.target);
+        this.animationProps = parseAnimationProps(this.target, this.props, this.computedStyles);
+        this.initialStyles = getInitialStyles(this.target, this.animationProps, this.computedStyles);
+        
+        switch (this.animationType) {
+            case 1:
+                this.startProps = this.initialStyles;
+                this.endProps = this.animationProps;
+                break;
+            case 2:
+                this.startProps = this.animationProps;
+                this.endProps = this.initialStyles;
+                break;
+            case 3:
+                this.startProps = this.animationProps;
+                this.endProps = parseAnimationProps(this.animationProps.endProps);
+                break;    
+            default:
+                break;
+        }
+
+        this.initialTransformValues = getInitialTransformValues(this.target, this.computedStyles);
+
         let pA;
-        for (const p in props) {
+        for (const p in this.endProps) {
             let newPA;
-            let endValue = props[p];
+            let endValue = this.endProps[p];
             let startValue = this.getStyle(p);
 
 
@@ -171,10 +191,17 @@ export class Animation { // Должно быть несколько типов 
         }
     }
 
-    render = (time, delta, frame) => {
+    render = (time) => {
+        if (!this.isInitted) {
+            console.log('initted');
+            this.initAnimation();
+            this.isInitted = true;
+        }
+
+
         if (time > this.endTime && !this.isPaused) {
-            Ticker.getInstance().remove(this.render);
             this.applyProps(1);
+            this.removeSelf();
             return;
         }
 
@@ -183,11 +210,14 @@ export class Animation { // Должно быть несколько типов 
             return;
         }
 
-        this.elapsed = time - this.startTime;
+        this.elapsed = Math.max(time - this.startTime, 0);
         this.progress = this.elapsed / this.duration;
+        this.easedProgress = this.ease(this.progress);
         // console.log(this.progress);
 
-        this.applyProps(this.progress);
+        this.applyProps(this.easedProgress);
+
+        return this.easedProgress;
     }
 
     renderProps = (progress) => {
@@ -204,7 +234,6 @@ export class Animation { // Должно быть несколько типов 
 
     applyProps(progress) {
         const renderedProps = this.renderProps(progress);
-        console.log(renderedProps);
         for (const p in renderedProps) {
             const value = renderedProps[p];
             this.target.style[p] = value;
@@ -368,7 +397,6 @@ function parseAnimationProps(el, props, styles) {
                 res['translate' + p.toUpperCase()] = props[p];
             } else if (shorthandProps[p] != undefined) {
                 const allProps = parseShorthandProperty(p, props[p], styles);
-                console.log(allProps);
                 for (const key in allProps) {
                     res[key] = allProps[key];
                 }
@@ -378,7 +406,7 @@ function parseAnimationProps(el, props, styles) {
         }
     }
 
-    return res;
+    return {...transforms, ...res};
 }
 
 function parseShorthandProperty(prop, value, cS) {
@@ -416,9 +444,9 @@ function getInitialStyles(el, props, computedStyles) {
         transforms = Object.entries(transforms)
         .filter(([key, value]) => props.hasOwnProperty(key))
         .reduce((accumulator, [key, prop]) => {
-            accumulator[`${key}`] = Number.parseFloat(prop.toString().match(valueExp)[0]);
+            accumulator[`${key}`] = Number.parseFloat(prop.toString().match(numExp)[0]);
             return accumulator
-        },{}) 
+        },{});
     }
 
 
@@ -452,8 +480,8 @@ function getTransformMatrix(scaleX, scaleY, rotationDegrees, translateX, transla
 }
 
 function getInitialTransformValues(el, computedStyles) {
-    const transform = computedStyles.transform;
-  
+    const inlineTransform = el.style.transform;
+    const transform = inlineTransform && inlineTransform !== 'none' ? inlineTransform : computedStyles.transform;
     let transformValues = {
         xPercent: 0,
         yPercent: 0,
@@ -475,19 +503,23 @@ function getInitialTransformValues(el, computedStyles) {
             yPercent: yPercent,
             translateX: matrix.m41 - (xPercent * el.offsetWidth / 100),                                     // Смещение по оси X
             translateY: matrix.m42 - (yPercent * el.offsetHeight / 100),                                     // Смещение по оси Y
-            scaleX: matrix.a,                                           // Масштаб по оси X
-            scaleY: matrix.d,                                           // Масштаб по оси Y
+            scaleX: Math.abs(matrix.a),                                           // Масштаб по оси X
+            scaleY: Math.abs(matrix.d),                                           // Масштаб по оси Y
             rotate: Math.atan2(matrix.b, matrix.a) * (180 / Math.PI),   // Вращение в градусах
             skewX: Math.atan(matrix.c) * (180 / Math.PI),               // Наклон по оси X
-            skewY: Math.atan(matrix.b) * (180 / Math.PI)                // Наклон по оси Y
+            skewY: Math.atan(matrix.b) * (180 / Math.PI),                // Наклон по оси Y
         };
     }
 
     if (transformValues.scaleX === transformValues.scaleY) {
         transformValues.scale = transformValues.scaleX;
+
     } else {
         transformValues.scale = `${transformValues.scaleX} ${transformValues.scaleY}`
     }
+
+    delete transformValues.scaleX;
+    delete transformValues.scaleY;
 
     return transformValues;
 }
@@ -594,7 +626,7 @@ function compressTransformProps(animation, props) {
     const transformProps = ['translateX', 'translateY','translateZ','scale','scaleX','scaleY','rotate', 'skewX', 'skewY'];
     let transformString = getTransformValue(props);
     const xP = animation.initialTransformValues.xPercent;
-    const yP = animation.initialTransformValues.yPercent
+    const yP = animation.initialTransformValues.yPercent;
     if (xP != 0 || yP != 0) {
         transformString = `translate(${xP}%, ${yP}%) ${transformString}`;
     }
