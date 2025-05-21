@@ -44,8 +44,8 @@ export default class Ticker {
     remove(func) {
         let i = this.listeners.indexOf(func);
         if (i + 1) {
-        this.listeners.splice(i, 1);
-        if (this.i >= i) this.i--;
+            this.listeners.splice(i, 1);
+            if (this.i >= i) this.i--;
         }
     
     }

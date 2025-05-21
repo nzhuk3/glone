@@ -81,11 +81,8 @@ const colorExp = function () {
     return new RegExp(s + ")", "gi");
 }()
 
-export class Animation { // Должно быть несколько типов анимаций, в зависимости от которых элементу задаются начальные значения для анимации (тип 1 - с указанных значений на указанные, тип 2 - с места на указанные, тип 3 - с указанных на место)
-    timeScale = 1;
-    isPaused = false;
-    isReversed = false;
-    isInitted = false;
+export class Animation { 
+    autoRemove = false;
     pA = null;
     elapsed = 0;
     progress = 0;
@@ -98,31 +95,6 @@ export class Animation { // Должно быть несколько типов 
         this.ease = props.ease ?? easeQuadInOut;
         this.target = target;
         this.duration = props.duration * 1000 || 500;
-        this.delay = props.delay || 0;
-        this.startTime = (props.startTime || Ticker.getInstance().time) + this.delay * 1000;
-        this.endTime = this.startTime + this.duration;
-    }
-
-
-    seek(time) {
-        if (time * 1000 > this.duration) {
-            this.progress = 1;
-        } else {
-            this.startTime = this.startTime - time * 1000;
-            this.endTime = this.startTime + this.duration;
-            this.progress = time * 1000 / this.duration;
-        }
-    }
-
-    stop() {
-        this.remaining = this.duration - this.elapsed;
-        this.isPaused = true;
-    }
-
-    continue() {
-        this.endTime = Ticker.getInstance().time + this.remaining;
-        this.startTime = Ticker.getInstance().time - (this.duration - this.remaining);
-        this.isPaused = false;
     }
 
     getStyle(prop) {
@@ -191,29 +163,19 @@ export class Animation { // Должно быть несколько типов 
         }
     }
 
-    render = (time) => {
+    render = (elapsed) => {
         if (!this.isInitted) {
-            console.log('initted');
             this.initAnimation();
             this.isInitted = true;
         }
 
-
-        if (time > this.endTime && !this.isPaused) {
-            this.applyProps(1);
-            this.removeSelf();
-            return;
-        }
-
         if (this.isPaused) {
-            this.applyProps(this.progress);
+            this.applyProps(this.easedProgress);
             return;
         }
 
-        this.elapsed = Math.max(time - this.startTime, 0);
-        this.progress = this.elapsed / this.duration;
+        this.progress = elapsed / this.duration;
         this.easedProgress = this.ease(this.progress);
-        // console.log(this.progress);
 
         this.applyProps(this.easedProgress);
 
@@ -237,6 +199,12 @@ export class Animation { // Должно быть несколько типов 
         for (const p in renderedProps) {
             const value = renderedProps[p];
             this.target.style[p] = value;
+        }
+    }
+
+    removeSelf = function() {
+        if (this._node && this._node.container) {
+            this._node.container._removeNode(this._node);
         }
     }
 }
